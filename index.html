@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Древо связей и контактов</title>
+
+  <!-- Vis.js для отображения интерактивного графа -->
+  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: #f4f6f8; color: #333; padding: 20px; }
+    .container { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 350px 1fr; gap: 20px; }
+    
+    .card { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin-bottom: 20px; }
+    h2 { font-size: 1.2rem; margin-bottom: 12px; color: #1a1a1a; }
+    
+    input, textarea, select { width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 6px; outline: none; }
+    input:focus, textarea:focus { border-color: #0066cc; }
+    
+    button { width: 100%; padding: 10px; background: #0066cc; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+    button:hover { background: #0052a3; }
+    button.secondary { background: #6c757d; margin-top: 8px; }
+    button.secondary:hover { background: #5a6268; }
+
+    .search-results { max-height: 300px; overflow-y: auto; list-style: none; }
+    .search-item { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; border-radius: 4px; }
+    .search-item:hover { background: #f0f4f8; }
+    .search-item .role { font-size: 0.85rem; color: #666; }
+
+    .details-field { margin-bottom: 12px; }
+    .details-field strong { display: block; font-size: 0.85rem; color: #666; }
+    
+    .rel-badge { display: inline-flex; align-items: center; background: #e9ecef; padding: 6px 12px; border-radius: 20px; margin: 4px; font-size: 0.9rem; cursor: pointer; }
+    .rel-badge:hover { background: #d0d7de; }
+
+    #network { width: 100%; height: 500px; border: 1px solid #eee; border-radius: 8px; background: #fafafa; }
+    
+    .api-config { background: #fff3cd; border: 1px solid #ffe69c; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <!-- ЛЕВАЯ КОЛОНКА: Настройки, Поиск и Форма -->
+  <div>
+    <!-- Подключение к JSONbin.io -->
+    <div class="card api-config">
+      <h2>Настройки JSONbin.io</h2>
+      <input type="text" id="binId" placeholder="BIN ID">
+      <input type="password" id="apiKey" placeholder="X-Master-Key">
+      <button onclick="loadData()">Загрузить из БД</button>
+      <button class="secondary" onclick="saveData()">Сохранить в БД</button>
+    </div>
+
+    <!-- Поиск -->
+    <div class="card">
+      <h2>Поиск людей</h2>
+      <input type="text" id="searchInput" placeholder="Имя, профессия, заметка..." oninput="handleSearch()">
+      <ul class="search-results" id="searchResults"></ul>
+    </div>
+
+    <!-- Добавление человека -->
+    <div class="card">
+      <h2>Добавить человека</h2>
+      <input type="text" id="newName" placeholder="ФИО">
+      <input type="text" id="newOccupation" placeholder="Род деятельности">
+      <textarea id="newBio" placeholder="Заметки / Инфо"></textarea>
+      <button onclick="addPerson()">Добавить</button>
+    </div>
+  </div>
+
+  <!-- ПРАВАЯ КОЛОНКА: Карточка и Древо -->
+  <div>
+    <!-- Карточка выбранного человека -->
+    <div class="card" id="personCard">
+      <h2>Профиль человека</h2>
+      <p style="color: #888;">Выберите человека из списка поиска или на графе.</p>
+    </div>
+
+    <!-- Визуальный граф связей -->
+    <div class="card">
+      <h2>Интерактивное древо связей</h2>
+      <div id="network"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let people = [];
+  let selectedPersonId = null;
+  let network = null;
+
+  // Инициализация Vis.js графа
+  const container = document.getElementById('network');
+  const graphData = { nodes: new vis.DataSet([]), edges: new vis.DataSet([]) };
+  const options = {
+    nodes: { shape: 'dot', size: 16, font: { size: 14 } },
+    edges: { font: { align: 'top', size: 10 }, arrows: 'to' },
+    physics: { solver: 'forceAtlas2Based' }
+  };
+  network = new vis.Network(container, graphData, options);
+
+  // Клик по узлу графа
+  network.on("click", function (params) {
+    if (params.nodes.length > 0) {
+      selectPerson(params.nodes[0]);
+    }
+  });
+
+  // --- JSONbin.io Интеграция ---
+  async function loadData() {
+    const binId = document.getElementById('binId').value.trim();
+    const apiKey = document.getElementById('apiKey').value.trim();
+
+    if (!binId || !apiKey) return alert('Заполните BIN ID и API Key!');
+
+    try {
+      const res = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {
+        headers: { 'X-Master-Key': apiKey }
+      });
+      const data = await res.json();
+      people = Array.isArray(data.record) ? data.record : [];
+      renderGraph();
+      handleSearch();
+      alert('Данные успешно загружены!');
+    } catch (e) {
+      alert('Ошибка загрузки данных из JSONbin!');
+    }
+  }
+
+  async function saveData() {
+    const binId = document.getElementById('binId').value.trim();
+    const apiKey = document.getElementById('apiKey').value.trim();
+
+    if (!binId || !apiKey) return alert('Заполните BIN ID и API Key!');
+
+    try {
+      await fetch(`https://api.jsonbin.io/v3/b/${binId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Master-Key': apiKey
+        },
+        body: JSON.stringify(people)
+      });
+      alert('Данные успешно сохранены!');
+    } catch (e) {
+      alert('Ошибка сохранения!');
+    }
+  }
+
+  // --- Управление контактами ---
+  function addPerson() {
+    const name = document.getElementById('newName').value.trim();
+    const occupation = document.getElementById('newOccupation').value.trim();
+    const bio = document.getElementById('newBio').value.trim();
+
+    if (!name) return alert('Введите имя!');
+
+    const newPerson = {
+      id: 'p_' + Date.now(),
+      name,
+      occupation,
+      bio,
+      relations: []
+    };
+
+    people.push(newPerson);
+    document.getElementById('newName').value = '';
+    document.getElementById('newOccupation').value = '';
+    document.getElementById('newBio').value = '';
+
+    renderGraph();
+    handleSearch();
+    selectPerson(newPerson.id);
+  }
+
+  function addRelation(fromId) {
+    const targetId = document.getElementById('relTargetSelect').value;
+    const type = document.getElementById('relTypeInput').value.trim();
+
+    if (!targetId || !type) return alert('Выберите человека и укажите тип связи!');
+
+    const person = people.find(p => p.id === fromId);
+    if (person && !person.relations.some(r => r.targetId === targetId)) {
+      person.relations.push({ targetId, type });
+      renderGraph();
+      selectPerson(fromId);
+    }
+  }
+
+  // --- Поиск ---
+  function handleSearch() {
+    const query = document.getElementById('searchInput').value.toLowerCase();
+    const resultsContainer = document.getElementById('searchResults');
+    resultsContainer.innerHTML = '';
+
+    const filtered = people.filter(p => 
+      p.name.toLowerCase().includes(query) ||
+      (p.occupation && p.occupation.toLowerCase().includes(query)) ||
+      (p.bio && p.bio.toLowerCase().includes(query))
+    );
+
+    filtered.forEach(p => {
+      const li = document.createElement('li');
+      li.className = 'search-item';
+      li.innerHTML = `<strong>${p.name}</strong><div class="role">${p.occupation || 'Без рода деятельности'}</div>`;
+      li.onclick = () => selectPerson(p.id);
+      resultsContainer.appendChild(li);
+    });
+  }
+
+  // --- Отображение карточки ---
+  function selectPerson(id) {
+    selectedPersonId = id;
+    const person = people.find(p => p.id === id);
+    const card = document.getElementById('personCard');
+
+    if (!person) return;
+
+    // Выборка кандидатов для новых связей (все, кроме текущего)
+    const otherPeople = people.filter(p => p.id !== id);
+    const optionsHtml = otherPeople.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+
+    card.innerHTML = `
+      <h2>${person.name}</h2>
+      <div class="details-field"><strong>Род деятельности:</strong> ${person.occupation || '—'}</div>
+      <div class="details-field"><strong>Заметки:</strong> ${person.bio || '—'}</div>
+      
+      <div class="details-field">
+        <strong>Родственники и связи:</strong>
+        <div>
+          ${person.relations.length === 0 ? 'Связи не указаны' : ''}
+          ${person.relations.map(r => {
+            const relPerson = people.find(p => p.id === r.targetId);
+            return relPerson ? `<span class="rel-badge" onclick="selectPerson('${relPerson.id}')">${r.type}: ${relPerson.name}</span>` : '';
+          }).join('')}
+        </div>
+      </div>
+
+      <hr style="margin: 15px 0; border: 0; border-top: 1px solid #eee;">
+      
+      <h3>Добавить связь</h3>
+      <select id="relTargetSelect"><option value="">Выберите человека...</option>${optionsHtml}</select>
+      <input type="text" id="relTypeInput" placeholder="Тип связи (Отец, Сестра, Друг)">
+      <button onclick="addRelation('${person.id}')">Связать</button>
+    `;
+
+    // Подсветка узла на графе
+    network.selectNodes([id]);
+  }
+
+  // --- Отрисовка графа (Vis.js) ---
+  function renderGraph() {
+    const nodes = people.map(p => ({
+      id: p.id,
+      label: p.name,
+      title: p.occupation
+    }));
+
+    const edges = [];
+    people.forEach(p => {
+      p.relations.forEach(r => {
+        edges.push({
+          from: p.id,
+          to: r.targetId,
+          label: r.type
+        });
+      });
+    });
+
+    graphData.nodes.clear();
+    graphData.nodes.add(nodes);
+    graphData.edges.clear();
+    graphData.edges.add(edges);
+  }
+</script>
+
+</body>
+  </html>
+  
