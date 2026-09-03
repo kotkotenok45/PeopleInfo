@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Viewer — Древо связей</title>
+  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: #f4f6f8; color: #333; padding: 20px; }
+    .container { max-width: 1000px; margin: 0 auto; display: grid; grid-template-columns: 320px 1fr; gap: 20px; }
+    .card { background: #fff; border-radius: 12px; padding: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin-bottom: 15px; }
+    h2 { font-size: 1.05rem; margin-bottom: 10px; color: #1a1a1a; }
+    input { width: 100%; padding: 8px 10px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.95rem; }
+    button { width: 100%; padding: 8px; background: #0066cc; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+    button:hover { background: #0052a3; }
+    .status { font-size: 0.85rem; color: #666; margin-top: 6px; }
+    .search-results { max-height: 220px; overflow-y: auto; list-style: none; margin-top: 8px; }
+    .search-item { padding: 6px 8px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 0.9rem; }
+    .search-item:hover { background: #f0f4f8; }
+    .rel-badge { display: inline-block; background: #e9ecef; padding: 3px 8px; border-radius: 12px; margin: 2px; font-size: 0.8rem; cursor: pointer; }
+    .notice { font-size: 0.75rem; color: #888; margin-top: 10px; line-height: 1.3; }
+    #network { width: 100%; height: 500px; border: 1px solid #eee; border-radius: 8px; background: #fafafa; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <!-- ЛЕВАЯ КОЛОНКА -->
+  <div>
+    <div class="card">
+      <h2>1. Ввод короткого кода</h2>
+      <input type="text" id="shortCodeInput" placeholder="Код clck.ru (например: 3ABC12)" maxlength="30">
+      <button onclick="loadByShortCode()">Загрузить древо</button>
+      <p id="statusText" class="status"></p>
+      <p class="notice">
+        * Код должен вести на <strong>публичный</strong> JSONbin (Public Bin). Авторизация по Master Key не используется.
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>2. Поиск по древу</h2>
+      <input type="text" id="searchInput" placeholder="Имя или сфера..." oninput="handleSearch()" disabled>
+      <ul class="search-results" id="searchResults"></ul>
+    </div>
+  </div>
+
+  <!-- ПРАВАЯ КОЛОНКА -->
+  <div>
+    <div class="card" id="personCard">
+      <h2>Профиль</h2>
+      <p style="color: #888; font-size:0.9rem;">Введите код clck.ru слева для загрузки данных.</p>
+    </div>
+
+    <div class="card">
+      <h2>Древо связей</h2>
+      <div id="network"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let people = [];
+  let network = null;
+
+  const container = document.getElementById('network');
+  const graphData = { nodes: new vis.DataSet([]), edges: new vis.DataSet([]) };
+  
+  network = new vis.Network(container, graphData, {
+    nodes: { shape: 'dot', size: 14, font: { size: 13 } },
+    edges: { font: { align: 'top', size: 9 }, arrows: 'to' },
+    physics: { solver: 'forceAtlas2Based' }
+  });
+
+  network.on("click", params => { 
+    if (params.nodes.length) selectPerson(params.nodes[0]); 
+  });
+
+  async function loadByShortCode() {
+    const statusEl = document.getElementById('statusText');
+    let code = document.getElementById('shortCodeInput').value.trim();
+    
+    // Если случайно вставили ссылку целиком (например, https://clck.ru/3ABC12) — берем только хвост
+    if (code.includes('/')) {
+      code = code.split('/').pop();
+    }
+
+    if (!code) {
+      statusEl.textContent = 'Введите короткий код!';
+      statusEl.style.color = 'red';
+      return;
+    }
+
+    statusEl.textContent = 'Разрешение короткого кода...';
+    statusEl.style.color = '#666';
+
+    try {
+      // 1. Узнаём реальный URL через CORS-прокси
+      const clckUrl = `https://clck.ru/${code}`;
+      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(clckUrl)}`;
+      
+      const resolveRes = await fetch(proxyUrl);
+      if (!resolveRes.ok) throw new Error('Код не найден');
+
+      // corsproxy.io возвращает итоговый URL после редиректа в свойствах ответа
+      const fullJsonbinUrl = resolveRes.url;
+
+      statusEl.textContent = 'Загрузка данных из публичного Bin...';
+
+      // 2. Читаем публичный JSONbin (без заголовков X-Master-Key)
+      const dataRes = await fetch(fullJsonbinUrl);
+      if (!dataRes.ok) {
+        if (dataRes.status === 401) {
+          throw new Error('Доступ запрещен. Проверьте, сделан ли Bin ПУБЛИЧНЫМ!');
+        }
+        throw new Error('Не удалось прочитать данные с JSONbin');
+      }
+
+      const data = await dataRes.json();
+      people = Array.isArray(data.record) ? data.record : (data.record.people || []);
+
+      statusEl.textContent = `Успешно загружено! (${people.length} чел.)`;
+      statusEl.style.color = 'green';
+      document.getElementById('searchInput').disabled = false;
+
+      renderGraph();
+      handleSearch();
+    } catch (e) {
+      statusEl.textContent = `Ошибка: ${e.message}`;
+      statusEl.style.color = 'red';
+    }
+  }
+
+  function handleSearch() {
+    const q = document.getElementById('searchInput').value.toLowerCase();
+    const res = document.getElementById('searchResults');
+    res.innerHTML = '';
+
+    people.filter(p => p.name.toLowerCase().includes(q) || (p.occupation && p.occupation.toLowerCase().includes(q)))
+      .forEach(p => {
+        const li = document.createElement('li');
+        li.className = 'search-item';
+        li.innerHTML = `<strong>${p.name}</strong> <span style="color:#777">(${p.occupation || '—'})</span>`;
+        li.onclick = () => selectPerson(p.id);
+        res.appendChild(li);
+      });
+  }
+
+  function selectPerson(id) {
+    const p = people.find(item => item.id === id);
+    if (!p) return;
+
+    document.getElementById('personCard').innerHTML = `
+      <h2>${p.name}</h2>
+      <p style="font-size:0.9rem; margin-bottom: 4px;"><strong>Сфера:</strong> ${p.occupation || '—'}</p>
+      <p style="font-size:0.9rem; margin-bottom: 8px;"><strong>Заметки:</strong> ${p.bio || '—'}</p>
+      <div><strong>Связи:</strong><br>
+        ${(p.relations || []).map(r => {
+          const target = people.find(x => x.id === r.targetId);
+          return target ? `<span class="rel-badge" onclick="selectPerson('${target.id}')">${r.type}: ${target.name}</span>` : '';
+        }).join('') || '<span style="font-size:0.85rem; color:#888;">Нет связей</span>'}
+      </div>
+    `;
+    network.selectNodes([id]);
+  }
+
+  function renderGraph() {
+    const nodes = people.map(p => ({ id: p.id, label: p.name, title: p.occupation }));
+    const edges = [];
+    people.forEach(p => (p.relations || []).forEach(r => edges.push({ from: p.id, to: r.targetId, label: r.type })));
+
+    graphData.nodes.clear();
+    graphData.nodes.add(nodes);
+    graphData.edges.clear();
+    graphData.edges.add(edges);
+  }
+</script>
+
+</body>
+  </html>
+  
