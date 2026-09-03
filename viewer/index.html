@@ -19,9 +19,11 @@
     .tab-content.active { display: block; }
 
     input, textarea { width: 100%; padding: 8px 10px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.95rem; }
-    textarea { height: 70px; resize: none; font-family: monospace; font-size: 0.85rem; }
-    button.action-btn { width: 100%; padding: 8px; background: #0066cc; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+    textarea { height: 75px; resize: none; font-family: monospace; font-size: 0.85rem; white-space: pre; }
+    button.action-btn { width: 100%; padding: 8px; background: #0066cc; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; margin-bottom: 6px; }
     button.action-btn:hover { background: #0052a3; }
+    button.copy-btn { background: #28a745; }
+    button.copy-btn:hover { background: #218838; }
     
     .status { font-size: 0.85rem; color: #666; margin-top: 6px; word-break: break-all; }
     .search-results { max-height: 220px; overflow-y: auto; list-style: none; margin-top: 8px; }
@@ -59,8 +61,8 @@
         
         <div id="codeResult" class="result-box" style="display: none;">
           <div class="code-title" id="generatedCode"></div>
-          <p style="font-size: 0.8rem; color: #555; margin-bottom: 4px;">Скопируйте строку для вставки в BIN:</p>
-          <textarea id="jsonPairOutput" readonly onclick="this.select()"></textarea>
+          <textarea id="jsonPairOutput" readonly></textarea>
+          <button class="action-btn copy-btn" id="copyBtn" onclick="copyFormattedText()">Скопировать с табом</button>
         </div>
       </div>
     </div>
@@ -126,7 +128,6 @@
     return result;
   }
 
-  // Чтение короткого кода из публичного BIN
   async function loadByShortCode() {
     const statusEl = document.getElementById('decodeStatus');
     let code = document.getElementById('shortCodeInput').value.trim().toLowerCase();
@@ -170,16 +171,17 @@
     }
   }
 
-  // Генерация строки (без отправки на сервер)
   function generateShortCode() {
     const statusEl = document.getElementById('encodeStatus');
     const resultEl = document.getElementById('codeResult');
     const codeTitleEl = document.getElementById('generatedCode');
     const jsonOutputEl = document.getElementById('jsonPairOutput');
+    const copyBtn = document.getElementById('copyBtn');
     
     let input = document.getElementById('binUrlInput').value.trim();
 
     resultEl.style.display = 'none';
+    copyBtn.textContent = 'Скопировать с табом';
 
     if (!input) {
       statusEl.textContent = 'Вставьте BIN ID!';
@@ -197,8 +199,25 @@
     statusEl.style.color = 'green';
     
     codeTitleEl.textContent = newCode;
-    jsonOutputEl.value = `"${newCode}": "${input}"`;
+    // Вставляем символ табуляции \t в начале
+    jsonOutputEl.value = `\t"${newCode}": "${input}"`;
     resultEl.style.display = 'block';
+  }
+
+  function copyFormattedText() {
+    const jsonOutputEl = document.getElementById('jsonPairOutput');
+    const copyBtn = document.getElementById('copyBtn');
+
+    // Безопасное копирование для мобильных браузеров
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(jsonOutputEl.value).then(() => {
+        copyBtn.textContent = 'Скопировано! ✓';
+      });
+    } else {
+      jsonOutputEl.select();
+      document.execCommand('copy');
+      copyBtn.textContent = 'Скопировано! ✓';
+    }
   }
 
   function handleSearch() {
