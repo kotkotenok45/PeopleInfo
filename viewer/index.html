@@ -18,7 +18,8 @@
     .tab-content { display: none; }
     .tab-content.active { display: block; }
 
-    input { width: 100%; padding: 8px 10px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.95rem; }
+    input, textarea { width: 100%; padding: 8px 10px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.95rem; }
+    textarea { height: 70px; resize: none; font-family: monospace; font-size: 0.85rem; }
     button.action-btn { width: 100%; padding: 8px; background: #0066cc; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
     button.action-btn:hover { background: #0052a3; }
     
@@ -27,7 +28,8 @@
     .search-item { padding: 6px 8px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 0.9rem; }
     .search-item:hover { background: #f0f4f8; }
     .rel-badge { display: inline-block; background: #e9ecef; padding: 3px 8px; border-radius: 12px; margin: 2px; font-size: 0.8rem; cursor: pointer; }
-    .result-box { background: #f0f7ff; border: 1px dashed #0066cc; padding: 10px; border-radius: 6px; text-align: center; margin-top: 10px; font-weight: bold; font-size: 1.2rem; color: #0066cc; user-select: all; }
+    .result-box { background: #f0f7ff; border: 1px dashed #0066cc; padding: 10px; border-radius: 6px; margin-top: 10px; }
+    .code-title { font-weight: bold; font-size: 1.2rem; color: #0066cc; text-align: center; margin-bottom: 6px; }
     
     #network { width: 100%; height: 500px; border: 1px solid #eee; border-radius: 8px; background: #fafafa; }
   </style>
@@ -35,7 +37,6 @@
 <body>
 
 <div class="container">
-  <!-- ЛЕВАЯ КОЛОНКА -->
   <div>
     <div class="card">
       <div class="tabs">
@@ -43,21 +44,24 @@
         <button class="tab-btn" onclick="switchTab('encode')">Шифрование</button>
       </div>
 
-      <!-- Вкладка 1: Расшифровка кода -->
       <div id="tab-decode" class="tab-content active">
         <h2>Ввод кода доступа</h2>
-        <input type="text" id="shortCodeInput" placeholder="Введите 6-7 значный код" maxlength="30">
+        <input type="text" id="shortCodeInput" placeholder="Введите 6-значный код" maxlength="10">
         <button class="action-btn" onclick="loadByShortCode()">Открыть древо</button>
         <p id="decodeStatus" class="status"></p>
       </div>
 
-      <!-- Вкладка 2: Генерация кода -->
       <div id="tab-encode" class="tab-content">
         <h2>Генерация кода</h2>
         <input type="text" id="binUrlInput" placeholder="Вставьте BIN ID">
-        <button class="action-btn" onclick="generateShortCode()">Получить код</button>
+        <button class="action-btn" onclick="generateShortCode()">Сформировать строку</button>
         <p id="encodeStatus" class="status"></p>
-        <div id="codeResult" class="result-box" style="display: none;"></div>
+        
+        <div id="codeResult" class="result-box" style="display: none;">
+          <div class="code-title" id="generatedCode"></div>
+          <p style="font-size: 0.8rem; color: #555; margin-bottom: 4px;">Скопируйте строку для вставки в BIN:</p>
+          <textarea id="jsonPairOutput" readonly onclick="this.select()"></textarea>
+        </div>
       </div>
     </div>
 
@@ -68,7 +72,6 @@
     </div>
   </div>
 
-  <!-- ПРАВАЯ КОЛОНКА -->
   <div>
     <div class="card" id="personCard">
       <h2>Профиль</h2>
@@ -83,6 +86,8 @@
 </div>
 
 <script>
+  const INDEX_BIN_ID = '6a997303da38895dfe33ee72';
+
   let people = [];
   let network = null;
 
@@ -112,14 +117,19 @@
     }
   }
 
-  // 1. РАСШИФРОВКА 6-7 ЗНАЧНОГО КОДА
+  function makeRandomCode(length = 6) {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let result = '';
+    for (let i = 0; i < length; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  }
+
+  // Чтение короткого кода из публичного BIN
   async function loadByShortCode() {
     const statusEl = document.getElementById('decodeStatus');
-    let code = document.getElementById('shortCodeInput').value.trim();
-    
-    if (code.includes('/')) {
-      code = code.split('/').pop();
-    }
+    let code = document.getElementById('shortCodeInput').value.trim().toLowerCase();
 
     if (!code) {
       statusEl.textContent = 'Введите код!';
@@ -127,25 +137,23 @@
       return;
     }
 
-    statusEl.textContent = 'Поиск источника...';
+    statusEl.textContent = 'Поиск кода...';
     statusEl.style.color = '#666';
 
     try {
-      // Разворачиваем короткий код через CORS-прокси
-      const tinyUrl = `https://tinyurl.com/${code}`;
-      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(tinyUrl)}`;
+      const indexRes = await fetch(`https://api.jsonbin.io/v3/b/${INDEX_BIN_ID}/latest`);
+      if (!indexRes.ok) throw new Error('Не удалось загрузить базу кодов');
       
-      const resolveRes = await fetch(proxyUrl);
-      if (!resolveRes.ok) throw new Error('Код не найден!');
+      const indexData = await indexRes.json();
+      const codeMap = indexData.record || {};
 
-      const fullJsonbinUrl = resolveRes.url;
+      const binId = codeMap[code];
+      if (!binId) throw new Error('Код не найден!');
 
       statusEl.textContent = 'Загрузка данных...';
 
-      const dataRes = await fetch(fullJsonbinUrl);
-      if (!dataRes.ok) {
-        throw new Error('Ошибка доступа! Проверьте, сделан ли Bin ПУБЛИЧНЫМ.');
-      }
+      const dataRes = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`);
+      if (!dataRes.ok) throw new Error('Ошибка доступа к Bin');
 
       const data = await dataRes.json();
       people = Array.isArray(data.record) ? data.record : (data.record.people || []);
@@ -162,10 +170,13 @@
     }
   }
 
-  // 2. ГЕНЕРАЦИЯ 6-7 ЗНАЧНОГО КОДА
-  async function generateShortCode() {
+  // Генерация строки (без отправки на сервер)
+  function generateShortCode() {
     const statusEl = document.getElementById('encodeStatus');
     const resultEl = document.getElementById('codeResult');
+    const codeTitleEl = document.getElementById('generatedCode');
+    const jsonOutputEl = document.getElementById('jsonPairOutput');
+    
     let input = document.getElementById('binUrlInput').value.trim();
 
     resultEl.style.display = 'none';
@@ -176,41 +187,18 @@
       return;
     }
 
-    // Собираем полный URL
-    let fullUrl = input;
-    if (!input.startsWith('http://') && !input.startsWith('https://')) {
-      fullUrl = `https://api.jsonbin.io/v3/b/${input}/latest`;
+    if (input.includes('/b/')) {
+      input = input.split('/b/')[1].split('/')[0];
     }
 
-    statusEl.textContent = 'Генерация кода...';
-    statusEl.style.color = '#666';
+    const newCode = makeRandomCode(6);
 
-    try {
-      // Прямой запрос к публичному API TinyURL
-      const tinyApiUrl = `https://tinyurl.com/api-create.php?url=${encodeURIComponent(fullUrl)}`;
-      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(tinyApiUrl)}`;
-
-      const res = await fetch(proxyUrl);
-      if (!res.ok) throw new Error('Ошибка связи с сервером');
-
-      const shortUrl = await res.text();
-      
-      if (!shortUrl.includes('tinyurl.com')) {
-        throw new Error('Некорректный отклик');
-      }
-
-      // Вырезаем хвост (короткий код)
-      const code = shortUrl.trim().split('/').pop();
-
-      statusEl.textContent = 'Код успешно создан!';
-      statusEl.style.color = 'green';
-
-      resultEl.textContent = code; // Ровно 6–7 символов
-      resultEl.style.display = 'block';
-    } catch (e) {
-      statusEl.textContent = 'Ошибка создания кода! Проверьте BIN ID.';
-      statusEl.style.color = 'red';
-    }
+    statusEl.textContent = 'Готово!';
+    statusEl.style.color = 'green';
+    
+    codeTitleEl.textContent = newCode;
+    jsonOutputEl.value = `"${newCode}": "${input}"`;
+    resultEl.style.display = 'block';
   }
 
   function handleSearch() {
