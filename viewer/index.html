@@ -12,7 +12,6 @@
     .card { background: #fff; border-radius: 12px; padding: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin-bottom: 15px; }
     h2 { font-size: 1.05rem; margin-bottom: 10px; color: #1a1a1a; }
     
-    /* Табы */
     .tabs { display: flex; gap: 5px; margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
     .tab-btn { flex: 1; padding: 6px; font-size: 0.85rem; background: #eee; border: none; border-radius: 6px; cursor: pointer; color: #555; }
     .tab-btn.active { background: #0066cc; color: #fff; font-weight: 600; }
@@ -55,7 +54,7 @@
       <!-- Вкладка 2: Генерация кода -->
       <div id="tab-encode" class="tab-content">
         <h2>Генерация кода</h2>
-        <input type="text" id="binUrlInput" placeholder="Вставьте URL публичного Bin">
+        <input type="text" id="binUrlInput" placeholder="Вставьте BIN ID">
         <button class="action-btn" onclick="generateShortCode()">Получить код</button>
         <p id="encodeStatus" class="status"></p>
         <div id="codeResult" class="result-box" style="display: none;"></div>
@@ -162,31 +161,42 @@
     }
   }
 
-  // 2. ШИФРОВАНИЕ В КОД
+  // 2. ШИФРОВАНИЕ BIN ID В КОД
   async function generateShortCode() {
     const statusEl = document.getElementById('encodeStatus');
     const resultEl = document.getElementById('codeResult');
-    const binUrl = document.getElementById('binUrlInput').value.trim();
+    let input = document.getElementById('binUrlInput').value.trim();
 
     resultEl.style.display = 'none';
 
-    if (!binUrl) {
-      statusEl.textContent = 'Вставьте ссылку на источник!';
+    if (!input) {
+      statusEl.textContent = 'Вставьте BIN ID!';
       statusEl.style.color = 'red';
       return;
     }
 
-    statusEl.textContent = 'Генерация 6-значного кода...';
+    // Если ввели чистый BIN ID, форматируем в полный URL JSONbin
+    let fullUrl = input;
+    if (!input.startsWith('http://') && !input.startsWith('https://')) {
+      fullUrl = `https://api.jsonbin.io/v3/b/${input}/latest`;
+    }
+
+    statusEl.textContent = 'Генерация кода...';
     statusEl.style.color = '#666';
 
     try {
-      const serviceUrl = `https://clck.ru/--?url=${encodeURIComponent(binUrl)}`;
+      const serviceUrl = `https://clck.ru/--?url=${encodeURIComponent(fullUrl)}`;
       const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(serviceUrl)}`;
 
       const res = await fetch(proxyUrl);
       if (!res.ok) throw new Error('Не удалось сгенерировать код');
 
       const shortUrl = await res.text();
+      
+      if (shortUrl.includes('error') || !shortUrl.includes('clck.ru')) {
+        throw new Error('Некорректный BIN ID');
+      }
+
       const code = shortUrl.trim().split('/').pop();
 
       statusEl.textContent = 'Код успешно создан!';
@@ -195,7 +205,7 @@
       resultEl.textContent = code;
       resultEl.style.display = 'block';
     } catch (e) {
-      statusEl.textContent = 'Ошибка при создании кода!';
+      statusEl.textContent = 'Ошибка! Проверьте правильность BIN ID.';
       statusEl.style.color = 'red';
     }
   }
